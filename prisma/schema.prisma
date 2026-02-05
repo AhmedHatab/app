@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DietaryTag {
+  VEGAN
+  VEGETARIAN
+  KETO
+  GLUTEN_FREE
+  DAIRY_FREE
+  HALAL
+}
+
+model Country {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique // ISO alpha-2, e.g. "IT", "MX"
+  region      String?
+  recipes     Recipe[]
+  substitutes IngredientSubstitute[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Recipe {
+  id              String               @id @default(cuid())
+  slug            String               @unique
+  title           String
+  summary         String
+  imageUrl        String?
+  originStory     String               @db.Text
+  instructions    Json                 // array of ordered steps
+  baseServings    Int                  @default(2)
+  prepMinutes     Int?
+  cookMinutes     Int?
+  countryId       String
+  country         Country              @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  ingredients     RecipeIngredient[]
+  dietaryTags     RecipeDietaryTag[]
+  cuisines        RecipeCuisine[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([countryId])
+}
+
+model Ingredient {
+  id                   String                 @id @default(cuid())
+  name                 String                 @unique
+  canonicalUnit        String?                // g, ml, tbsp, piece
+  recipeIngredients    RecipeIngredient[]
+  substituteFromLinks  IngredientSubstitute[] @relation("SubstituteFrom")
+  substituteToLinks    IngredientSubstitute[] @relation("SubstituteTo")
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+}
+
+model RecipeIngredient {
+  id                      String   @id @default(cuid())
+  recipeId                String
+  ingredientId            String
+  quantity                Decimal  @db.Decimal(10, 2)
+  unit                    String?
+  note                    String?
+  optional                Boolean  @default(false)
+  allowLocalization       Boolean  @default(true)
+  recipe                  Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient              Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeId, ingredientId])
+  @@index([ingredientId])
+}
+
+/// Join table for many-to-many dietary tags.
+model RecipeDietaryTag {
+  recipeId String
+  tag      DietaryTag
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@id([recipeId, tag])
+}
+
+/// Cuisines are flexible strings for filtering (e.g. "Mediterranean", "Latin American").
+model RecipeCuisine {
+  recipeId String
+  cuisine  String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@id([recipeId, cuisine])
+  @@index([cuisine])
+}
+
+/// Ingredient substitution logic for "Localize Ingredients".
+///
+/// Example:
+/// fromIngredient = Mirin
+/// toIngredient = White Vinegar
+/// ratio = 0.75, plusAmount = 1 tsp sugar (free-text in notes)
+model IngredientSubstitute {
+  id                     String      @id @default(cuid())
+  fromIngredientId       String
+  toIngredientId         String
+  /// Country where this substitute should be applied (user locale / target pantry)
+  targetCountryId        String?
+  /// Optional source country to narrow substitutions to dish origin.
+  sourceCountryId        String?
+  /// Multiplier applied to original quantity when converting.
+  ratio                  Decimal     @default(1) @db.Decimal(10, 4)
+  /// Optional additive quantity in the target unit.
+  plusAmount             Decimal?    @db.Decimal(10, 2)
+  plusUnit               String?
+  notes                  String?
+  priority               Int         @default(100)
+  fromIngredient         Ingredient  @relation("SubstituteFrom", fields: [fromIngredientId], references: [id], onDelete: Cascade)
+  toIngredient           Ingredient  @relation("SubstituteTo", fields: [toIngredientId], references: [id], onDelete: Restrict)
+  targetCountry          Country?    @relation(fields: [targetCountryId], references: [id], onDelete: SetNull)
+
+  @@index([fromIngredientId, targetCountryId, priority])
+  @@index([fromIngredientId, sourceCountryId, targetCountryId])
+}
